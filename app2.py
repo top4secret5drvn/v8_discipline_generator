@@ -501,13 +501,24 @@ def update_streak(habit_id, date_str, success):
     except Exception as e:
         print(f"Error updating streak: {e}")
 
-
 @app.route('/api/completions', methods=['POST'])
 def save_completions():
-    """Сохранение выполненных привычек за день (и пересчёт стриков)"""
+    """Сохранение выполненных привычек за день (и пересчёт стриков)
+       + применение индекса трения (friction_index 1..10 -> множитель 1..3)
+    """
     try:
         data = request.json
         day_date = data.get('date', date.today().isoformat())
+
+        # --- НОВОЕ: читаем индекс трения и вычисляем множитель ---
+        try:
+            friction = int(data.get('friction_index', 1) or 1)
+        except Exception:
+            friction = 1
+        # Ограничим 1..10
+        friction = max(1, min(10, friction))
+        # Линейная шкала: 1 -> 1.0, 10 -> 3.0
+        multiplier = 1.0 + (friction - 1) * (2.0 / 9.0)
 
         conn = sqlite3.connect('habits.db')
         cursor = conn.cursor()
@@ -518,9 +529,24 @@ def save_completions():
         # Сохраняем каждую привычку (только если есть habit_id)
         for habit in data.get('habits', []):
             if not habit.get('habit_id'):
-                # пропускаем записи без habit_id, логируем
                 print('Skipping habit without habit_id:', habit)
                 continue
+
+            # --- НОВОЕ: мультипликация характеристик на множитель ---
+            def _m(v):
+                try:
+                    return float(v or 0.0) * multiplier
+                except Exception:
+                    return 0.0
+
+            i_val = _m(habit.get('i', 0.0))
+            s_val = _m(habit.get('s', 0.0))
+            w_val = _m(habit.get('w', 0.0))
+            e_val = _m(habit.get('e', 0.0))
+            c_val = _m(habit.get('c', 0.0))
+            h_val = _m(habit.get('h', 0.0))
+            st_val = _m(habit.get('st', 0.0))
+            money_val = _m(habit.get('money', 0.0))
 
             cursor.execute('''
                 INSERT INTO completed_habits 
@@ -532,14 +558,14 @@ def save_completions():
                 day_date,
                 habit.get('quantity'),
                 1 if habit.get('success') else 0,
-                habit.get('i', 0.0),
-                habit.get('s', 0.0),
-                habit.get('w', 0.0),
-                habit.get('e', 0.0),
-                habit.get('c', 0.0),
-                habit.get('h', 0.0),
-                habit.get('st', 0.0),
-                habit.get('money', 0.0),
+                i_val,
+                s_val,
+                w_val,
+                e_val,
+                c_val,
+                h_val,
+                st_val,
+                money_val,
                 data.get('day_number'),
                 data.get('state'),
                 data.get('emotion_morning'),
@@ -568,8 +594,7 @@ def save_completions():
                         combo_bonus['ST'] += c.get('st', 0.0) or 0.0
                         combo_bonus['$'] += c.get('money', 0.0) or 0.0
 
-                # добавим бонусы сочетаний к totals, если переданы totals или инициализируем
-                totals = data.get('totals', {})
+                totals = data.get('totals', {}) or {}
                 totals = {
                     'I': totals.get('I', 0.0) + combo_bonus['I'],
                     'S': totals.get('S', 0.0) + combo_bonus['S'],
@@ -580,59 +605,25 @@ def save_completions():
                     'ST': totals.get('ST', 0.0) + combo_bonus['ST'],
                     '$': totals.get('$', 0.0) + combo_bonus['$']
                 }
-                # запишем обратно в data, чтобы ниже вставка использовала обновлённые totals
                 data['totals'] = totals
         except Exception as e:
             print('Error applying combinations bonuses:', e)
 
         # Сохраняем статистику дня (и приводим к числам)
         totals = data.get('totals', {}) or {}
-        # Убедимся, что все ключи присутствуют и числовые
         for _k in ('I','S','W','E','C','H','ST','$'):
             try:
                 totals[_k] = float(totals.get(_k, 0) or 0.0)
             except Exception:
                 totals[_k] = 0.0
 
-        # ---- применяем бонусы сочетаний (combinations) перед вставкой в discipline_days ----
-        try:
-            # Используем row_factory, чтобы удобнее обращаться по именам
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+        # ---- НОВОЕ: применить множитель трения к итоговым показателям дня ----
+        for _k in ('I','S','W','E','C','H','ST','$'):
+            totals[_k] = totals.get(_k, 0.0) * multiplier
 
-            # Получаем список выполненных привычек за этот день (success = 1)
-            cursor.execute('SELECT DISTINCT habit_id FROM completed_habits WHERE date = ? AND success = 1', (day_date,))
-            done_rows = cursor.fetchall()
-            done_ids = set([r['habit_id'] for r in done_rows]) if done_rows else set()
-
-            if done_ids:
-                # Берём все активные сочетания
-                cursor.execute('SELECT * FROM combinations WHERE is_active = 1')
-                combos = cursor.fetchall() or []
-                for c in combos:
-                    # Убедимся, что habit_a и habit_b в виде чисел и присутствуют
-                    try:
-                        ha = int(c['habit_a'])
-                        hb = int(c['habit_b'])
-                    except Exception:
-                        continue
-                    if ha in done_ids and hb in done_ids:
-                        # Добавляем бонусы (если поле NULL -> 0.0)
-                        totals['I'] += float(c.get('i') or 0.0)
-                        totals['S'] += float(c.get('s') or 0.0)
-                        totals['W'] += float(c.get('w') or 0.0)
-                        totals['E'] += float(c.get('e') or 0.0)
-                        totals['C'] += float(c.get('c') or 0.0)
-                        totals['H'] += float(c.get('h') or 0.0)
-                        totals['ST'] += float(c.get('st') or 0.0)
-                        totals['$'] += float(c.get('money') or 0.0)
-        except Exception as ex:
-            # Не критично: логируем, но не мешаем основной операции
-            print('Warning: error applying combinations bonuses:', ex)
-        finally:
-            # Вернём нормальный cursor (без row_factory) для дальнейших операций
-            conn.row_factory = None
-            cursor = conn.cursor()
+        # ---- вставка discipline_days (как раньше) ----
+        conn.row_factory = None
+        cursor = conn.cursor()
         cursor.execute('''
             INSERT OR REPLACE INTO discipline_days 
             (date, day_number, state, emotion_morning, thoughts,
@@ -657,15 +648,14 @@ def save_completions():
             data.get('total_count', 0)
         ))
 
-        # Теперь фиксируем — коммитим изменения completed_habits и discipline_days
         conn.commit()
 
-        # И — ключевая часть — пересчитываем все стрики по истории (на этом же соединении)
         recalc_all_streaks(conn)
 
         conn.close()
 
-        return jsonify({'status': 'success'})
+        # Можно вернуть multiplier обратно клиенту для отладки/отображения
+        return jsonify({'status': 'success', 'friction_index': friction, 'multiplier': multiplier})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 

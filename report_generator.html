@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="static/style.css">
+  <link rel="stylesheet" href="static/style.css"> <!-- Подключаем стили -->
   <title>Генератор отчёта дисциплины — ДЕНЬ (с базой данных)</title>
 
 </head>
@@ -25,6 +25,18 @@
     + Приседания — 75 раз I[0.00] S[0.01] W[0.01] E[0.00] C[0.01] H[0.01] ST[1] $[0]
     + Отжимания — 30 раз I[0.00] S[0.01] W[0.01] E[0.00] C[0.01] H[0.01] ST[1] $[0]
 + Пить воду — 2 литра I[0.00] S[0.00] W[0.01] E[0.00] C[0.01] H[0.02] ST[1] $[0]"></textarea>
+
+  <div class="friction-block">
+      <label for="frictionIndex">
+          Индекс трения: <span id="frictionValue">1</span>
+      </label>
+      <input type="range"
+            id="frictionIndex"
+            min="1"
+            max="10"
+            value="1"
+            step="1">
+  </div>
 
   <div class="controls">
     <button id="parseBtn" class="primary">Разобрать и отобразить</button>
@@ -703,7 +715,8 @@
 		day_number: currentDayDisplay ? parseInt(currentDayDisplay.textContent) || 1 : 1,
 		completed_count: completedCountEl ? parseInt(completedCountEl.textContent) || 0 : 0,
 		total_count: totalCountEl ? parseInt(totalCountEl.textContent) || 0 : 0,
-		totals: calculateTotalStats(parsed)
+		totals: calculateTotalStats(parsed),
+    friction_index: parseInt(document.getElementById('frictionIndex')?.value || 1)
 	  };
 	  
 	  fetch('/api/completions', {
@@ -711,7 +724,7 @@
 		headers: {
 		  'Content-Type': 'application/json'
 		},
-		body: JSON.stringify(postData)
+		body: JSON.stringify(postData),
 	  })
 	  .then(response => response.json())
 	  .then(data => {
@@ -1118,6 +1131,15 @@
 	  saveStateToLocal();
 	});
 
+
+  const frictionInput = document.getElementById('frictionIndex');
+  const frictionValue = document.getElementById('frictionValue');
+
+  if (frictionInput && frictionValue) {
+      frictionInput.addEventListener('input', () => {
+          frictionValue.textContent = frictionInput.value;
+      });
+  }
     
 	// --- renderTasks: более аккуратно определяем catalogHabit, проставляем catalogId, корректно показываем стрики ---
 	function renderTasks(){
@@ -2108,5 +2130,4 @@
     document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
-
 </html>
