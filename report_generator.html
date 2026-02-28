@@ -576,19 +576,25 @@
             displayName = raw;
           }
         } else {
-          // fallback: try to parse filename from habit.habit_name parentheses
-          const hn = String(habit.habit_name || '');
-          const m = hn.match(/\(([^)]+)\)/);
-          if(m && m[1]){
-            const inner = m[1]; // try to split inner by common separators
-            const im = inner.match(/^(.*?)\s*[\-–—|:]{1,3}\s*(.+)$/);
-            if(im){
-              const proj = prettifyTopic(im[1]);
-              const fname = im[2].trim();
-              displayName = `${proj} — ${fname}`;
+          // Если это проектная работа (определяем по префиксу), пробуем извлечь содержимое скобок
+          if (String(habit.habit_name || '').startsWith('Работа по проекту')) {
+            const hn = String(habit.habit_name || '');
+            const m = hn.match(/\(([^)]+)\)/);
+            if (m && m[1]) {
+              const inner = m[1];
+              const im = inner.match(/^(.*?)\s*[\-–—|:]{1,3}\s*(.+)$/);
+              if (im) {
+                const proj = prettifyTopic(im[1]);
+                const fname = im[2].trim();
+                displayName = `${proj} — ${fname}`;
+              } else {
+                displayName = inner;
+              }
             } else {
-              displayName = inner;
+              displayName = hn; // если нет скобок, используем полное имя
             }
+          } else {
+            displayName = habit.habit_name; // обычная привычка — имя как есть
           }
         }
         const prefix = (String(habit.habit_name||'').startsWith('Работа по проекту')) ? 'Работа по проекту: ' : '';
