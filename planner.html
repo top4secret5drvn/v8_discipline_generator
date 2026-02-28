@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/planner.css">
+  <title>Планировщик — Roadmap</title>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Проекты</h2>
+      <ul id="projectsList"></ul>
+      <div style="margin-top:12px">
+        <input id="newProjectName" placeholder="Новая папка" style="width:100%; box-sizing:border-box;" />
+        <button id="createProjectBtn" style="width:100%; margin-top:6px">Создать проект</button>
+      </div>
+      <div style="margin-top:12px">
+        <button id="refreshProjects">Обновить</button>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="main-header">
+        <h1 id="projectTitle">Выберите проект</h1>
+        <div class="links">
+          <a href="/">← Генератор отчёта</a>
+          <a href="/tasks" style="margin-left:12px">→ Мелкие дела</a>
+          <a href="/portable_report.html" style="margin-left:12px">→ Портативный генератор</a>
+        </div>
+      </header>
+      <div id="roadmapContainer">
+        <div id="progressBar" class="progress"><div id="progressFill"></div></div>
+        <div id="progressInfo" style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div id="progressPercent" style="font-weight:600;color:#333">0%</div><div id="progressLabel" style="color:#666;font-size:13px">Прогресс проекта</div></div>
+        <svg id="roadmapSvg" width="100%" height="400"></svg>
+        <div id="nodesCol" class="nodes-col"></div>
+        <aside id="detailPanel" class="detail-panel">
+          <h3 id="detailTitle">Детали</h3>
+          <div id="detailContent" class="detail-content">Выберите узел слева</div>
+          <div style="margin-top:8px">
+            <label>Содержимое файлика</label>
+            <textarea id="detailTextarea" style="width:100%;height:140px;box-sizing:border-box;margin-top:6px"></textarea>
+          </div>
+          <div class="detail-controls">
+            <label>Дельты характеристик (I S W E C H ST $)</label>
+            <div class="deltas">
+              <input id="dI" placeholder="I" />
+              <input id="dS" placeholder="S" />
+              <input id="dW" placeholder="W" />
+              <input id="dE" placeholder="E" />
+              <input id="dC" placeholder="C" />
+              <input id="dH" placeholder="H" />
+              <input id="dST" placeholder="ST" />
+              <input id="d$" placeholder="$" />
+            </div>
+            <div style="margin-top:8px;text-align:right">
+              <button id="applyDeltasBtn">Выполнено + применить</button>
+              <button id="saveContentBtn" style="margin-left:8px">Сохранить содержимое</button>
+              <button id="deleteTaskBtn" style="margin-left:8px">Удалить</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/planner.js"></script>
+</body>
+</html>

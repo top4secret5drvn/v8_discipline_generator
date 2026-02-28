@@ -5,6 +5,7 @@ import json
 import sys
 import sqlite3
 from io import BytesIO
+from server.db import init_db, recalc_all_streaks as recalc_all_streaks_db, update_streak as update_streak_db
 
 app = Flask(__name__)
 
@@ -12,6 +13,7 @@ app = Flask(__name__)
 # Получаем директорию, где находится app.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_FILE = os.path.join(BASE_DIR, 'report_generator.html')
+PLANNER_FILE = os.path.join(BASE_DIR, 'planner.html')
 
 # Проверяем существование файла
 if not os.path.exists(HTML_FILE):
@@ -24,160 +26,52 @@ if not os.path.exists(HTML_FILE):
 with open(HTML_FILE, 'r', encoding='utf-8') as f:
     HTML_TEMPLATE = f.read()
 
+# Загружаем шаблон планировщика (если есть)
+PLANNER_TEMPLATE = None
+if os.path.exists(PLANNER_FILE):
+    with open(PLANNER_FILE, 'r', encoding='utf-8') as f:
+        PLANNER_TEMPLATE = f.read()
+
+# Загружаем шаблон страницы мелких задач (если есть)
+TASKS_FILE = os.path.join(BASE_DIR, 'tasks.html')
+TASKS_TEMPLATE = None
+if os.path.exists(TASKS_FILE):
+    with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+        TASKS_TEMPLATE = f.read()
+
 print(f"✅ HTML файл загружен: {HTML_FILE}")
 
-# Инициализация базы данных
-def init_db():
-    """Инициализация базы данных при первом запуске"""
-    conn = sqlite3.connect('habits.db')
-    cursor = conn.cursor()
-    
-    # Таблица привычек (справочник)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS habits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            description TEXT,
-            default_quantity REAL,
-            unit TEXT,
-            i REAL DEFAULT 0.0,
-            s REAL DEFAULT 0.0,
-            w REAL DEFAULT 0.0,
-            e REAL DEFAULT 0.0,
-            c REAL DEFAULT 0.0,
-            h REAL DEFAULT 0.0,
-            st REAL DEFAULT 0.0,
-            money REAL DEFAULT 0.0,
-            is_composite BOOLEAN DEFAULT 0,
-            is_active BOOLEAN DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(name, category)
-        )
-    ''')
-    
-    # Таблица подзадач для составных привычек
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS habit_subtasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            habit_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            default_quantity REAL,
-            unit TEXT,
-            i REAL DEFAULT 0.0,
-            s REAL DEFAULT 0.0,
-            w REAL DEFAULT 0.0,
-            e REAL DEFAULT 0.0,
-            c REAL DEFAULT 0.0,
-            h REAL DEFAULT 0.0,
-            st REAL DEFAULT 0.0,
-            money REAL DEFAULT 0.0,
-            order_index INTEGER DEFAULT 0,
-            FOREIGN KEY (habit_id) REFERENCES habits (id) ON DELETE CASCADE
-        )
-    ''')
-    
-    # Таблица выполненных привычек
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS completed_habits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            habit_id INTEGER NOT NULL,
-            subtask_id INTEGER,
-            date DATE NOT NULL,
-            quantity REAL,
-            success BOOLEAN DEFAULT 1,
-            i REAL DEFAULT 0.0,
-            s REAL DEFAULT 0.0,
-            w REAL DEFAULT 0.0,
-            e REAL DEFAULT 0.0,
-            c REAL DEFAULT 0.0,
-            h REAL DEFAULT 0.0,
-            st REAL DEFAULT 0.0,
-            money REAL DEFAULT 0.0,
-            notes TEXT,
-            day_number INTEGER,
-            state TEXT,
-            emotion_morning TEXT,
-            thoughts TEXT,
-            FOREIGN KEY (habit_id) REFERENCES habits (id),
-            FOREIGN KEY (subtask_id) REFERENCES habit_subtasks (id),
-            UNIQUE(habit_id, subtask_id, date)
-        )
-    ''')
-    
-    # Таблица дней дисциплины
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS discipline_days (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date DATE UNIQUE NOT NULL,
-            day_number INTEGER NOT NULL,
-            state TEXT,
-            emotion_morning TEXT,
-            thoughts TEXT,
-            total_i REAL DEFAULT 0.0,
-            total_s REAL DEFAULT 0.0,
-            total_w REAL DEFAULT 0.0,
-            total_e REAL DEFAULT 0.0,
-            total_c REAL DEFAULT 0.0,
-            total_h REAL DEFAULT 0.0,
-            total_st REAL DEFAULT 0.0,
-            total_money REAL DEFAULT 0.0,
-            completed_count INTEGER DEFAULT 0,
-            total_count INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Таблица стриков
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS streaks (
-            habit_id INTEGER NOT NULL,
-            current_streak INTEGER DEFAULT 0,
-            longest_streak INTEGER DEFAULT 0,
-            last_date DATE,
-            FOREIGN KEY (habit_id) REFERENCES habits (id)
-        )
-    ''')
-
-    # Таблица сочетаний (combinations)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS combinations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            habit_a INTEGER NOT NULL,
-            habit_b INTEGER NOT NULL,
-            i REAL DEFAULT 0.0,
-            s REAL DEFAULT 0.0,
-            w REAL DEFAULT 0.0,
-            e REAL DEFAULT 0.0,
-            c REAL DEFAULT 0.0,
-            h REAL DEFAULT 0.0,
-            st REAL DEFAULT 0.0,
-            money REAL DEFAULT 0.0,
-            is_active BOOLEAN DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(habit_a, habit_b),
-            FOREIGN KEY (habit_a) REFERENCES habits (id) ON DELETE CASCADE,
-            FOREIGN KEY (habit_b) REFERENCES habits (id) ON DELETE CASCADE
-        )
-    ''')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_combinations_habits ON combinations(habit_a, habit_b)')
-    
-    # Индексы
-    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_streaks_habit ON streaks(habit_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_habits(date)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_completed_habit ON completed_habits(habit_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_habits_category ON habits(category)')
-    
-    conn.commit()
-    conn.close()
-
+# Инициализация БД (вынесена в модуль server.db)
 init_db()
 
 @app.route('/')
 def index():
     """Главная страница с генератором отчетов"""
     return render_template_string(HTML_TEMPLATE)
+
+
+@app.route('/planner')
+def planner_page():
+    """Отдельная страница планировщика"""
+    if PLANNER_TEMPLATE:
+        return render_template_string(PLANNER_TEMPLATE)
+    return "Planner page not found", 404
+
+@app.route('/tasks')
+def tasks_page():
+    """Отдельная страница для примитивного планировщика мелких дел"""
+    if TASKS_TEMPLATE:
+        return render_template_string(TASKS_TEMPLATE)
+    return "Tasks page not found", 404
+
+@app.route('/portable_report.html')
+def portable_page():
+    """Портативная версия генератора отчётов (можно открывать и как файл)"""
+    path = os.path.join(BASE_DIR, 'portable_report.html')
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return render_template_string(f.read())
+    return "Portable generator not found", 404
 
 # ============ API для работы с привычками ============
 
@@ -438,68 +332,11 @@ def delete_habit(habit_id):
 
 def update_streak(habit_id, date_str, success):
     """Обновление/создание стрика для привычки"""
+    # Перенаправляем вызов в реализацию в server.db
     try:
-        conn = sqlite3.connect('habits.db')
-        cursor = conn.cursor()
-
-        # Попробуем получить существующий стрик
-        cursor.execute('SELECT habit_id, current_streak, longest_streak, last_date FROM streaks WHERE habit_id = ?', (habit_id,))
-        streak = cursor.fetchone()
-
-        current_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-
-        if not streak:
-            # Создаем запись даже если success=False (чтобы клиент видел нули)
-            if success:
-                cursor.execute('''
-                    INSERT OR REPLACE INTO streaks (habit_id, current_streak, longest_streak, last_date)
-                    VALUES (?, ?, ?, ?)
-                ''', (habit_id, 1, 1, date_str))
-            else:
-                cursor.execute('''
-                    INSERT OR REPLACE INTO streaks (habit_id, current_streak, longest_streak, last_date)
-                    VALUES (?, ?, ?, ?)
-                ''', (habit_id, 0, 0, None))
-        else:
-            # streak: (habit_id, current_streak, longest_streak, last_date)
-            last_date = None
-            try:
-                last_date = datetime.strptime(streak[3], '%Y-%m-%d').date() if streak[3] else None
-            except Exception:
-                last_date = None
-
-            current_streak = int(streak[1] or 0)
-            longest_streak = int(streak[2] or 0)
-
-            if success:
-                if last_date and (current_date - last_date).days == 1:
-                    current_streak = current_streak + 1
-                else:
-                    # если предыдущая дата не была вчерашней — стартуем заново
-                    current_streak = 1
-
-                if current_streak > longest_streak:
-                    longest_streak = current_streak
-
-                cursor.execute('''
-                    UPDATE streaks SET 
-                        current_streak = ?,
-                        longest_streak = ?,
-                        last_date = ?
-                    WHERE habit_id = ?
-                ''', (current_streak, longest_streak, date_str, habit_id))
-            else:
-                # сбрасываем current_streak, не трогаем longest
-                cursor.execute('''
-                    UPDATE streaks SET
-                        current_streak = ? 
-                    WHERE habit_id = ?
-                ''', (0, habit_id))
-
-        conn.commit()
-        conn.close()
+        update_streak_db(habit_id, date_str, success)
     except Exception as e:
-        print(f"Error updating streak: {e}")
+        print(f"Error forwarding update_streak: {e}")
 
 @app.route('/api/completions', methods=['POST'])
 def save_completions():
@@ -706,6 +543,54 @@ def get_completions(date):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+
+@app.route('/api/completions/change_date', methods=['POST'])
+def change_completion_date():
+    """Перенести день из old_date в new_date (копировать + удалять старую запись)."""
+    try:
+        data = request.json or {}
+        old = data.get('old_date')
+        new = data.get('new_date')
+        if not old or not new:
+            return jsonify({'status':'error','message':'old_date and new_date required'}), 400
+
+        conn = sqlite3.connect('habits.db')
+        cursor = conn.cursor()
+
+        # Если в целевую дату уже есть записи, удалим их (перезапись)
+        cursor.execute('DELETE FROM completed_habits WHERE date = ?', (new,))
+        cursor.execute('DELETE FROM discipline_days WHERE date = ?', (new,))
+
+        # Копируем completed_habits
+        cursor.execute('SELECT habit_id, subtask_id, quantity, success, i, s, w, e, c, h, st, money, notes, day_number, state, emotion_morning, thoughts FROM completed_habits WHERE date = ?', (old,))
+        rows = cursor.fetchall()
+        for r in rows:
+            cursor.execute('''
+                INSERT INTO completed_habits (habit_id, subtask_id, date, quantity, success, i, s, w, e, c, h, st, money, notes, day_number, state, emotion_morning, thoughts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                r[0], r[1], new, r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12], r[13], r[14], r[15], r[16]
+            ))
+
+        # Копируем discipline_days (если есть)
+        cursor.execute('SELECT day_number, state, emotion_morning, thoughts, total_i, total_s, total_w, total_e, total_c, total_h, total_st, total_money, completed_count, total_count FROM discipline_days WHERE date = ?', (old,))
+        day = cursor.fetchone()
+        if day:
+            cursor.execute('''
+                INSERT OR REPLACE INTO discipline_days (date, day_number, state, emotion_morning, thoughts, total_i, total_s, total_w, total_e, total_c, total_h, total_st, total_money, completed_count, total_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (new, day[0], day[1], day[2], day[3], day[4], day[5], day[6], day[7], day[8], day[9], day[10], day[11], day[12], day[13]))
+
+        # После успешного копирования — удалим старые записи
+        cursor.execute('DELETE FROM completed_habits WHERE date = ?', (old,))
+        cursor.execute('DELETE FROM discipline_days WHERE date = ?', (old,))
+
+        conn.commit()
+        conn.close()
+        return jsonify({'status':'success'})
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 500
+
 # ============ API для статистики ============
 
 @app.route('/api/stats/period', methods=['GET'])
@@ -864,66 +749,16 @@ def get_period_stats():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-def recalc_all_streaks(conn):
+def recalc_all_streaks(conn=None):
+    """Обёртка: делегирует пересчёт стриков в server.db.recalc_all_streaks.
+
+    Поддерживает старый вызов с передачей соединения (`conn`), но внутренняя
+    реализация создаёт своё соединение к файлу `habits.db`.
     """
-    Пересчитать стрики для всех активных привычек по истории completed_habits.
-    Использует переданное соединение (чтобы избежать проблем с несозревшими транзакциями).
-    """
-    cursor = conn.cursor()
-
-    # Получаем все активные привычки
-    cursor.execute('SELECT id FROM habits WHERE is_active = 1')
-    habit_rows = cursor.fetchall()
-
-    for (habit_id,) in habit_rows:
-        # берем уникальные даты, где была success=1
-        cursor.execute('''
-            SELECT DISTINCT date FROM completed_habits
-            WHERE habit_id = ? AND success = 1
-            ORDER BY date
-        ''', (habit_id,))
-        date_rows = [row[0] for row in cursor.fetchall()]
-
-        if not date_rows:
-            # нет выполнений — сохраняем нулевой стрик
-            cursor.execute('''
-                INSERT OR REPLACE INTO streaks (habit_id, current_streak, longest_streak, last_date)
-                VALUES (?, ?, ?, ?)
-            ''', (habit_id, 0, 0, None))
-            continue
-
-        # парсим строки дат в объекты date
-        parsed_dates = [datetime.strptime(d, '%Y-%m-%d').date() for d in date_rows]
-
-        # посчитаем longest по всем сериями подряд
-        longest = 1
-        current_run = 1
-        for i in range(1, len(parsed_dates)):
-            if (parsed_dates[i] - parsed_dates[i-1]).days == 1:
-                current_run += 1
-            else:
-                if current_run > longest:
-                    longest = current_run
-                current_run = 1
-        if current_run > longest:
-            longest = current_run
-
-        # current_streak = длина серии, в которую входит самая последняя дата
-        last_run_length = 1
-        for i in range(len(parsed_dates)-1, 0, -1):
-            if (parsed_dates[i] - parsed_dates[i-1]).days == 1:
-                last_run_length += 1
-            else:
-                break
-
-        last_date_str = parsed_dates[-1].isoformat()
-        cursor.execute('''
-            INSERT OR REPLACE INTO streaks (habit_id, current_streak, longest_streak, last_date)
-            VALUES (?, ?, ?, ?)
-        ''', (habit_id, last_run_length, longest, last_date_str))
-
-    # один commit в конце — атомарно
-    conn.commit()
+    try:
+        recalc_all_streaks_db()
+    except Exception as e:
+        print(f"Error recalculating streaks: {e}")
 
 
 @app.route('/api/stats/streaks', methods=['GET'])
@@ -1113,6 +948,412 @@ def health_check():
         })
     except Exception as e:
         return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
+
+
+@app.route('/api/planner/projects', methods=['GET'])
+def planner_projects():
+    """Список проектов (папок) в директории roadmaps/"""
+    try:
+        root = os.path.join(BASE_DIR, 'roadmaps')
+        if not os.path.exists(root):
+            os.makedirs(root)
+
+        projects = []
+        for name in sorted(os.listdir(root)):
+            p = os.path.join(root, name)
+            if os.path.isdir(p):
+                projects.append(name)
+
+        return jsonify({'status': 'success', 'data': projects})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/planner/project/<project_name>', methods=['GET'])
+def planner_project(project_name):
+    """Список задач в проекте и их содержимое"""
+    try:
+        root = os.path.join(BASE_DIR, 'roadmaps')
+        proj_path = os.path.normpath(os.path.join(root, project_name))
+        if not proj_path.startswith(os.path.normpath(root)) or not os.path.exists(proj_path):
+            return jsonify({'status': 'error', 'message': 'Project not found'}), 404
+
+        items = []
+        for fn in sorted(os.listdir(proj_path)):
+            fp = os.path.join(proj_path, fn)
+            if os.path.isfile(fp):
+                try:
+                    with open(fp, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                except Exception:
+                    content = ''
+                completed = 'выполнено' in fn.lower() or 'вypol' in fn.lower()
+                items.append({'filename': fn, 'content': content, 'completed': completed})
+
+        return jsonify({'status': 'success', 'data': items})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/planner/create_project', methods=['POST'])
+def planner_create_project():
+    try:
+        data = request.json or {}
+        name = data.get('name')
+        if not name:
+            return jsonify({'status':'error','message':'name required'}), 400
+        root = os.path.join(BASE_DIR, 'roadmaps')
+        proj = os.path.normpath(os.path.join(root, name))
+        if not proj.startswith(os.path.normpath(root)):
+            return jsonify({'status':'error','message':'invalid name'}), 400
+        os.makedirs(proj, exist_ok=True)
+        return jsonify({'status':'success'})
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 500
+
+
+@app.route('/api/planner/toggle_training', methods=['POST'])
+def planner_toggle_training():
+    """Поставить/снять флаг обучающего проекта: добавляет/убирает префикс '!' у папки"""
+    try:
+        data = request.json or {}
+        project = data.get('project')
+        if not project:
+            return jsonify({'status':'error','message':'project required'}), 400
+
+        root = os.path.join(BASE_DIR, 'roadmaps')
+        src = os.path.normpath(os.path.join(root, project))
+        if not src.startswith(os.path.normpath(root)) or not os.path.exists(src):
+            return jsonify({'status':'error','message':'project not found'}), 404
+
+        # compute new name
+        basename = os.path.basename(src)
+        if basename.startswith('!'):
+            new_basename = basename[1:]
+        else:
+            new_basename = '!' + basename
+
+        dst = os.path.normpath(os.path.join(root, new_basename))
+        if os.path.exists(dst):
+            return jsonify({'status':'error','message':'target name exists'}), 400
+
+        os.replace(src, dst)
+        return jsonify({'status':'success','new_name': new_basename})
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 500
+
+
+@app.route('/api/planner/task', methods=['POST', 'PUT', 'DELETE'])
+def planner_task():
+    try:
+        data = request.json or {}
+        project = data.get('project')
+        filename = data.get('filename')
+        if not project or not filename:
+            return jsonify({'status':'error','message':'project and filename required'}), 400
+
+        root = os.path.join(BASE_DIR, 'roadmaps')
+        proj_path = os.path.normpath(os.path.join(root, project))
+        if not proj_path.startswith(os.path.normpath(root)) or not os.path.exists(proj_path):
+            return jsonify({'status':'error','message':'project not found'}), 404
+
+        fp = os.path.normpath(os.path.join(proj_path, filename))
+        if not fp.startswith(proj_path):
+            return jsonify({'status':'error','message':'invalid filename'}), 400
+
+        if request.method == 'POST':
+            # create new file (fail if exists)
+            # Для обучающих проектов: если в названии нет даты, добавим текущую дату
+            try:
+                is_training = project.startswith('!')
+            except Exception:
+                is_training = False
+
+            if is_training:
+                import re
+                if not re.search(r"\d{4}-\d{2}-\d{2}", filename):
+                    name, ext = os.path.splitext(filename)
+                    filename = f"{name} {date.today().isoformat()}{ext}"
+                    fp = os.path.normpath(os.path.join(proj_path, filename))
+
+            if os.path.exists(fp):
+                return jsonify({'status':'error','message':'file exists'}), 400
+            content = data.get('content','') or ''
+            with open(fp, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return jsonify({'status':'success', 'filename': filename})
+
+        if request.method == 'PUT':
+            # update content (must exist)
+            content = data.get('content','') or ''
+            with open(fp, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return jsonify({'status':'success'})
+
+        if request.method == 'DELETE':
+            if os.path.exists(fp):
+                os.remove(fp)
+                return jsonify({'status':'success'})
+            return jsonify({'status':'error','message':'file not found'}), 404
+
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 500
+
+
+@app.route('/api/planner/complete', methods=['POST'])
+def planner_mark_complete():
+    """Отметить задачу выполненной/отменить отметку — переименовывает файл"""
+    try:
+        data = request.json or {}
+        project = data.get('project')
+        filename = data.get('filename')
+        mark = bool(data.get('mark', True))
+
+        if not project or not filename:
+            return jsonify({'status': 'error', 'message': 'project and filename required'}), 400
+
+        root = os.path.join(BASE_DIR, 'roadmaps')
+        proj_path = os.path.normpath(os.path.join(root, project))
+        if not proj_path.startswith(os.path.normpath(root)) or not os.path.exists(proj_path):
+            return jsonify({'status': 'error', 'message': 'Project not found'}), 404
+
+        src = os.path.join(proj_path, filename)
+        if not os.path.exists(src) or not os.path.isfile(src):
+            return jsonify({'status': 'error', 'message': 'File not found'}), 404
+
+        name, ext = os.path.splitext(filename)
+        done_suffix = ' выполнено'
+
+        try:
+            is_training = project.startswith('!')
+        except Exception:
+            is_training = False
+
+        if is_training:
+            # Ebbinghaus behavior: append one 'x' per completion; after 3 x -> mark done
+            # Also set/update the date of last completion in the filename when marking.
+            base = name
+            # remove existing done suffix if present
+            if base.endswith(done_suffix):
+                base = base[:-len(done_suffix)]
+
+            import re
+            # parse: core name, optional date YYYY-MM-DD, optional xs
+            m = re.match(r"^(.*?)(?:\s(\d{4}-\d{2}-\d{2}))?(?:\s([x]+))?$", base)
+            if m:
+                core = (m.group(1) or '').strip()
+                date_part = m.group(2)
+                xs = m.group(3) or ''
+                x_count = len(xs)
+            else:
+                core = base.strip()
+                date_part = None
+                x_count = 0
+
+            today_str = date.today().isoformat()
+
+            if mark:
+                # increment repetitions (cap at 3) and update last-date to today
+                x_count = min(3, x_count + 1)
+                date_part = today_str
+            else:
+                # unmark: if was done (had done_suffix) - remove done flag but keep 3 x
+                if name.endswith(done_suffix):
+                    x_count = 3
+                elif x_count > 0:
+                    x_count = max(0, x_count - 1)
+                # if no more repetitions, clear date
+                if x_count == 0:
+                    date_part = None
+
+            # build new name
+            parts = [core]
+            if date_part:
+                parts.append(date_part)
+            if x_count > 0:
+                parts.append('x' * x_count)
+
+            new_name_body = ' '.join(parts).strip()
+            if x_count >= 3:
+                new_name = new_name_body + done_suffix + ext
+            else:
+                new_name = new_name_body + ext
+
+            dst = os.path.join(proj_path, new_name)
+            os.replace(src, dst)
+            # add to completions as project work
+            try:
+                if mark:
+                    conn = sqlite3.connect('habits.db')
+                    cursor = conn.cursor()
+                    today = date.today().isoformat()
+                    core_name = os.path.splitext(new_name)[0]
+                    # remove leading training marker (!) from project for clearer habit name
+                    project_clean = project.lstrip('!')
+                    habit_name = f'Работа по проекту ({project_clean} {core_name})'
+                    category = 'Проекты'
+                    cursor.execute('SELECT id FROM habits WHERE name = ? AND category = ?', (habit_name, category))
+                    row = cursor.fetchone()
+                    if row:
+                        hid = row[0]
+                    else:
+                        cursor.execute('''INSERT INTO habits (name, category, description, i, s, w, e, c, h, st, money, is_composite, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                       (habit_name, category, '', 0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,1))
+                        hid = cursor.lastrowid
+
+                    # if planner provided deltas, use them for this completed_habits row
+                    deltas = data.get('deltas') or {}
+                    def _f(k):
+                        try:
+                            return float(deltas.get(k, 0) or 0.0)
+                        except Exception:
+                            return 0.0
+
+                    i_v = _f('I')
+                    s_v = _f('S')
+                    w_v = _f('W')
+                    e_v = _f('E')
+                    c_v = _f('C')
+                    h_v = _f('H')
+                    st_v = _f('ST')
+                    money_v = _f('$')
+
+                    cursor.execute('''INSERT OR REPLACE INTO completed_habits (habit_id, subtask_id, date, quantity, success, i, s, w, e, c, h, st, money, notes, day_number, state, emotion_morning, thoughts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                   (hid, None, today, 1, 1, i_v, s_v, w_v, e_v, c_v, h_v, st_v, money_v, f'{project} {new_name}', None, None, None, None))
+
+                    cursor.execute('SELECT id FROM discipline_days WHERE date = ?', (today,))
+                    if not cursor.fetchone():
+                        cursor.execute('INSERT INTO discipline_days (date, day_number, state, completed_count, total_count) VALUES (?, ?, ?, ?, ?)', (today, 1, None, 1, 0))
+                    else:
+                        cursor.execute('UPDATE discipline_days SET completed_count = COALESCE(completed_count,0) + 1 WHERE date = ?', (today,))
+
+                    conn.commit()
+                    conn.close()
+            except Exception as e:
+                print('Error adding project work to completions:', e)
+
+            return jsonify({'status':'success','filename': new_name, 'x_count': x_count, 'date': date_part})
+
+        else:
+            # обычное поведение: добавляем дату выполнения при пометке
+            if mark and done_suffix not in name:
+                today_str = date.today().isoformat()
+                # вставляем дату перед суффиксом " выполнено"
+                new_name = f"{name} {today_str}{done_suffix}{ext}"
+            elif not mark and done_suffix in name:
+                # при снятии отметки убираем дату и суффикс
+                import re
+                # name может содержать дату перед словом "выполнено"
+                # удаляем дату и суффикс
+                base = re.sub(r"\s\d{4}-\d{2}-\d{2}(?=\sвыполнено)", '', name)
+                base = base.replace(done_suffix, '')
+                new_name = base + ext
+            else:
+                new_name = filename
+
+        dst = os.path.join(proj_path, new_name)
+        os.replace(src, dst)
+
+        # add to completions as project work for non-training projects
+        try:
+            if mark:
+                conn = sqlite3.connect('habits.db')
+                cursor = conn.cursor()
+                today = date.today().isoformat()
+                core_name = os.path.splitext(new_name)[0]
+                project_clean = project.lstrip('!')
+                habit_name = f'Работа по проекту ({project_clean} {core_name})'
+                category = 'Проекты'
+                cursor.execute('SELECT id FROM habits WHERE name = ? AND category = ?', (habit_name, category))
+                row = cursor.fetchone()
+                if row:
+                    hid = row[0]
+                else:
+                    cursor.execute('''INSERT INTO habits (name, category, description, i, s, w, e, c, h, st, money, is_composite, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                   (habit_name, category, '', 0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,1))
+                    hid = cursor.lastrowid
+
+                deltas = data.get('deltas') or {}
+                def _f(k):
+                    try:
+                        return float(deltas.get(k, 0) or 0.0)
+                    except Exception:
+                        return 0.0
+
+                i_v = _f('I')
+                s_v = _f('S')
+                w_v = _f('W')
+                e_v = _f('E')
+                c_v = _f('C')
+                h_v = _f('H')
+                st_v = _f('ST')
+                money_v = _f('$')
+
+                cursor.execute('''INSERT OR REPLACE INTO completed_habits (habit_id, subtask_id, date, quantity, success, i, s, w, e, c, h, st, money, notes, day_number, state, emotion_morning, thoughts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                               (hid, None, today, 1, 1, i_v, s_v, w_v, e_v, c_v, h_v, st_v, money_v, f'{project} {new_name}', None, None, None, None))
+
+                cursor.execute('SELECT id FROM discipline_days WHERE date = ?', (today,))
+                if not cursor.fetchone():
+                    cursor.execute('INSERT INTO discipline_days (date, day_number, state, completed_count, total_count) VALUES (?, ?, ?, ?, ?)', (today, 1, None, 1, 0))
+                else:
+                    cursor.execute('UPDATE discipline_days SET completed_count = COALESCE(completed_count,0) + 1 WHERE date = ?', (today,))
+
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            print('Error adding project work to completions:', e)
+
+        # Если пришли дельты характеристик — применим их к сегодняшнему дню
+        try:
+            deltas = data.get('deltas') or {}
+            apply_deltas = any(k in deltas for k in ('I','S','W','E','C','H','ST','$'))
+            if apply_deltas:
+                conn = sqlite3.connect('habits.db')
+                cursor = conn.cursor()
+                today = date.today().isoformat()
+
+                # Убедимся, что запись дисциплины существует
+                cursor.execute('SELECT id FROM discipline_days WHERE date = ?', (today,))
+                row = cursor.fetchone()
+                if not row:
+                    # вставим запись с нулями
+                    cursor.execute('INSERT INTO discipline_days (date, day_number, state, completed_count, total_count) VALUES (?, ?, ?, ?, ?)', (today, 1, None, 0, 0))
+
+                # Для каждого ключ прибавим к total_* поле
+                fields_map = {'I':'total_i','S':'total_s','W':'total_w','E':'total_e','C':'total_c','H':'total_h','ST':'total_st','$':'total_money'}
+                updates = {}
+                for k,v in deltas.items():
+                    if k in fields_map:
+                        try:
+                            val = float(v)
+                        except Exception:
+                            val = 0.0
+                        updates[fields_map[k]] = updates.get(fields_map[k], 0.0) + val
+
+                # Применяем обновления (агрегируем в SQL)
+                if updates:
+                    # Построим SET часть
+                    set_parts = []
+                    params = []
+                    for f,add in updates.items():
+                        set_parts.append(f + ' = COALESCE(' + f + ', 0) + ?')
+                        params.append(add)
+                    params.append(today)
+                    sql = 'UPDATE discipline_days SET ' + ', '.join(set_parts) + ' WHERE date = ?'
+                    cursor.execute(sql, params)
+
+                    # Увеличим completed_count если пометка выполнения
+                    if mark:
+                        cursor.execute('UPDATE discipline_days SET completed_count = COALESCE(completed_count,0) + 1 WHERE date = ?', (today,))
+
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            print('Error applying deltas from planner:', e)
+
+        return jsonify({'status': 'success', 'filename': new_name})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == '__main__':
     print("=" * 80)

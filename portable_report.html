@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Портативный генератор отчётов</title>
+  <style>
+    /* простой мобильный дизайн, подходит для iPhone XR */
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:12px;background:#f7f7f8;color:#222}
+    .container{max-width:500px;margin:0 auto}
+    h1{font-size:1.4em;margin-bottom:8px}
+    label{display:block;margin-top:8px;font-size:0.9em}
+    input[type="number"], input[type="date"], textarea{width:100%;padding:6px;box-sizing:border-box;margin-top:2px}
+    textarea{height:140px}
+    button{padding:8px 12px;margin-top:8px;width:100%;font-size:1em}
+    #tasksList{margin-top:12px}
+    .task{display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid #ccc}
+    .task.completed .name{text-decoration:line-through;color:#666}
+    .name{flex:1;word-break:break-word}
+    #reportOutput{white-space:pre-wrap;background:#fff;padding:8px;border:1px solid #ccc;margin-top:12px;min-height:120px}
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Портативный отчёт</h1>
+  <p>Заполните список действий, нажмите «Разобрать». Сохраните результат кнопкой «Скачать отчёт». Затем можно открыть файл на компьютере и вставить содержимое в основной генератор.</p>
+
+  <label for="lastDay">Номер последнего дня</label>
+  <input id="lastDay" type="number" value="0" />
+  <label for="lastDate">Дата последнего дня</label>
+  <input id="lastDate" type="date" value="" />
+
+  <label for="tasksInput">Список привычек / задач</label>
+  <textarea id="tasksInput" placeholder="Список в том же формате, что и на основном генераторе"></textarea>
+
+  <button id="parseBtn">Разобрать и показать</button>
+
+  <button id="sampleBtn">Загрузить пример</button>
+
+  <div id="tasksList"></div>
+
+  <button id="downloadReport">Скачать отчёт</button>
+
+  <div id="reportOutput"></div>
+</div>
+
+<script>
+/* === утилиты === */
+function toISODate(d){
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function daysBetween(dateA,dateB){
+  const a=new Date(dateA.getFullYear(),dateA.getMonth(),dateA.getDate());
+  const b=new Date(dateB.getFullYear(),dateB.getMonth(),dateB.getDate());
+  return Math.round((b-a)/86400000);
+}
+function parseCharacteristics(text){
+  const stats={I:0,S:0,W:0,E:0,C:0,H:0,ST:0,'$':0};
+  const regex=/([ISWEHC]|ST|\$)\[([-\d.]+)\]/g;
+  let match;
+  while((match=regex.exec(text))!==null){
+    const key=match[1];
+    const value=parseFloat(match[2]);
+    if(!isNaN(value)) stats[key]=value;
+  }
+  return stats;
+}
+function prettifyTopic(t){return t;}
+function formatTotalsForReport(totals){
+  if(!totals) return '—';
+  const order=[{key:'I',label:'Интеллект'},{key:'S',label:'Сила'},{key:'W',label:'Выносливость'},{key:'E',label:'Эмоции'},{key:'C',label:'Харизма'},{key:'H',label:'Здоровье'},{key:'ST',label:'Стабило'},{key:'$',label:'Рублей'}];
+  const parts=[];
+  order.forEach(o=>{
+    const v=totals[o.key];
+    if(v!==undefined&&Number(v)!==0){
+      // все числа отображаем с двумя знаками после запятой
+      const formatted = Number(v).toFixed(2);
+      if(o.key==='ST' || o.key==='$') {
+        parts.push(`${o.label}:${formatted}`);
+      } else {
+        parts.push(`${o.label} +%${formatted}`);
+      }
+    }
+  });
+  return parts.length?parts.join('  '):'—';
+}
+function calculateTotalStats(parsed){
+  const totals={I:0,S:0,W:0,E:0,C:0,H:0,ST:0,'$':0};
+  parsed.forEach(item=>{
+    if(item.type==='habit'&&item.success){
+      for(const k in totals) totals[k]+=item.stats[k]||0;
+    } else if(item.type==='composite_habit'){
+      item.subtasks.forEach(st=>{
+        if(st.success){
+          for(const k in totals) totals[k]+=st.stats[k]||0;
+        }
+      });
+    }
+  });
+  return totals;
+}
+
+/* === парсер === */
+function parseTextToStructure(text){
+  const lines=text.replace(/\r/g,'').split('\n');
+  const out=[];
+  let currentComposite=null;
+  let currentCategory=null;
+  for(let i=0;i<lines.length;i++){
+    const raw=lines[i];
+    const trimmed=raw.trim();
+    if(!trimmed){out.push({type:'blank'});continue;}
+    if(/^—+$/.test(trimmed)){continue;}
+    if(!/^[*+-]/.test(trimmed)&&!trimmed.endsWith(':')){
+      currentCategory=trimmed;
+      out.push({type:'category',text:trimmed,rawText:raw});
+      currentComposite=null;
+      continue;
+    }
+    if(/^[*]/.test(trimmed)){
+      const text2=trimmed.replace(/^\*\s*/,'');
+      const comp={type:'composite_habit',text:text2,subtasks:[],category:currentCategory,rawText:raw};
+      out.push(comp);
+      currentComposite=comp;
+      continue;
+    }
+    if(/^[+-]/.test(trimmed)){
+      const success=trimmed[0]==='+';
+      const rest=trimmed.substring(1).trim();
+      const isSubtask=raw.startsWith(' ')||raw.startsWith('\t');
+      const dashIndex=rest.indexOf(' — ');
+      let name=rest; let quantity=null; let unit=null; let statsText='';
+      if(dashIndex!==-1){
+        name=rest.substring(0,dashIndex).trim();
+        const afterDash=rest.substring(dashIndex+3).trim();
+        const statsMatch=afterDash.match(/(.+?)\s+(I\[.+?\])$/);
+        if(statsMatch){
+          const beforeStats=statsMatch[1];
+          statsText=statsMatch[2];
+          const quantityMatch=beforeStats.match(/^(\d+(?:\.\d+)?)\s+(.+)$/);
+          if(quantityMatch){
+            quantity=parseFloat(quantityMatch[1]);
+            unit=quantityMatch[2];
+          }
+        } else {
+          const qMatch=afterDash.match(/^(\d+(?:\.\d+)?)\s+(.+)$/);
+          if(qMatch){quantity=parseFloat(qMatch[1]);unit=qMatch[2];}
+        }
+      }
+      const stats=parseCharacteristics(statsText);
+      const item={type:'habit',success:success,name:name,quantity:quantity,unit:unit,stats:stats,category:currentCategory,rawText:raw};
+      if(isSubtask&&currentComposite){
+        item.isSubtask=true;
+        currentComposite.subtasks.push(item);
+      } else {
+        out.push(item);
+      }
+      continue;
+    }
+    // fallback
+    out.push({type:'unknown',text:trimmed,rawText:raw});
+  }
+  return out;
+}
+
+/* === отображение === */
+function renderTasks(){
+  const tasksList=document.getElementById('tasksList');
+  tasksList.innerHTML='';
+  parsed.forEach(item=>{
+    if(item.type==='blank'){const br=document.createElement('div');br.style.height='8px';tasksList.appendChild(br);return;}
+    if(item.type==='category'){const h=document.createElement('div');h.style.fontWeight='bold';h.textContent=prettifyTopic(item.text);tasksList.appendChild(h);return;}
+    if(item.type==='habit'){
+      const div=document.createElement('div');div.className='task'+(item.success?' completed':'');
+      const name=document.createElement('span');name.className='name';
+      name.textContent=item.name + (item.quantity?` — ${item.quantity} ${item.unit||''}`:'');
+      div.appendChild(name);
+      const btn=document.createElement('button');btn.textContent=item.success?'✔':'✖';
+      btn.onclick=()=>{item.success=!item.success;renderTasks();reportOutput.textContent=buildReportText();};
+      div.appendChild(btn);
+      tasksList.appendChild(div);
+      return;
+    }
+    if(item.type==='composite_habit'){
+      const div=document.createElement('div');div.style.fontStyle='italic';div.textContent=item.text;tasksList.appendChild(div);
+      item.subtasks.forEach(st=>{
+        const div2=document.createElement('div');div2.style.paddingLeft='16px';div2.className='task'+(st.success?' completed':'');
+        const name=document.createElement('span');name.className='name';
+        name.textContent=st.name + (st.quantity?` — ${st.quantity} ${st.unit||''}`:'');
+        div2.appendChild(name);
+        const btn=document.createElement('button');btn.textContent=st.success?'✔':'✖';
+        btn.onclick=()=>{st.success=!st.success;renderTasks();reportOutput.textContent=buildReportText();};
+        div2.appendChild(btn);
+        tasksList.appendChild(div2);
+      });
+      return;
+    }
+  });
+}
+
+/* === отчёт === */
+function buildReportText(){
+  const today=new Date();
+  const todayISO=toISODate(today);
+  const lastDateVal= lastDateEl.value? new Date(lastDateEl.value):null;
+  let dayNumber=Number(lastDayEl.value||0);
+  if(lastDateVal) dayNumber += daysBetween(lastDateVal,today);
+  const totals=calculateTotalStats(parsed);
+  const lines=[];
+  lines.push(`📅 ДЕНЬ ${dayNumber} · ${todayISO}`);
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━');
+  lines.push('📊 СУММА ХАРАКТЕРИСТИК (за день)');
+  lines.push('━━━━━━━━━━━━━━━━━━');
+  lines.push(formatTotalsForReport(totals));
+  lines.push('');
+  lines.push('━━━━━━━━━━');
+  lines.push('🧠 СОСТОЯНИЕ');
+  lines.push('━━━━━━━━━━');
+  // state/emotion omitted
+  parsed.forEach(item=>{
+    if(item.type==='category'){
+      lines.push('');
+      lines.push('━━━━━━━━━━');
+      lines.push(prettifyTopic(item.text));
+      lines.push('━━━━━━━━━━');
+    }
+    if(item.type==='habit'){
+      const icon=item.success?'✅':'❌';
+      let line=`${icon} ${item.name}`;
+      if(item.quantity) line += ` — ${item.quantity} ${item.unit||''}`;
+      lines.push(line);
+    }
+    if(item.type==='composite_habit'){
+      lines.push('');
+      lines.push('◾ '+item.text);
+      item.subtasks.forEach(st=>{
+        const icon=st.success?'✅':'❌';
+        let ln=`    ${icon} ${st.name}`;
+        if(st.quantity) ln += ` — ${st.quantity} ${st.unit||''}`;
+        lines.push(ln);
+      });
+    }
+  });
+  return lines.join('\n');
+}
+
+/* === инициализация === */
+let parsed=[];
+const lastDayEl=document.getElementById('lastDay');
+const lastDateEl=document.getElementById('lastDate');
+const tasksInput=document.getElementById('tasksInput');
+const parseBtn=document.getElementById('parseBtn');
+const tasksList=document.getElementById('tasksList');
+const reportOutput=document.getElementById('reportOutput');
+const downloadReport=document.getElementById('downloadReport');
+
+parseBtn.onclick=()=>{
+  parsed=parseTextToStructure(tasksInput.value);
+  renderTasks();
+  reportOutput.textContent=buildReportText();
+};
+
+downloadReport.onclick=()=>{
+  const txt=reportOutput.textContent;
+  const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;
+  a.download=`report_${toISODate(new Date())}.txt`;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+};
+
+</script>
+</body>
+</html>
