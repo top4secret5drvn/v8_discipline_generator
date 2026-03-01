@@ -96,7 +96,8 @@ def init_db(db_path: str = 'habits.db'):
             total_st REAL DEFAULT 0.0,
             total_money REAL DEFAULT 0.0,
             completed_count INTEGER DEFAULT 0,
-            total_count INTEGER DEFAULT 0
+            total_count INTEGER DEFAULT 0,
+            friction_index INTEGER DEFAULT 1
         )
     ''')
 
@@ -137,6 +138,11 @@ def init_db(db_path: str = 'habits.db'):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_completed_date ON completed_habits(date)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_completed_habit ON completed_habits(habit_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_habits_category ON habits(category)')
+    # ensure old databases have the friction_index column as well
+    cursor.execute("PRAGMA table_info(discipline_days)")
+    cols = [row[1] for row in cursor.fetchall()]
+    if 'friction_index' not in cols:
+        cursor.execute('ALTER TABLE discipline_days ADD COLUMN friction_index INTEGER DEFAULT 1')
 
     conn.commit()
     conn.close()

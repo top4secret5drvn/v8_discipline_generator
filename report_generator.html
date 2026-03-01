@@ -263,8 +263,8 @@
 	  order.forEach(o => {
 		const v = totals[o.key];
 		if (v !== undefined && Number(v) !== 0) {
-		  // ST — целое, $ может быть отрицательным/целым; остальные — формат 2 знака
-		  if (o.key === 'ST' || o.key === '$') parts.push(`${o.label}:${v}`);
+		  // показываем две цифры после запятой для ST и $
+		  if (o.key === 'ST' || o.key === '$') parts.push(`${o.label}:${Number(v).toFixed(2)}`);
 		  else {
         parts.push(`${o.label} +%${Number(v).toFixed(2)}`);
         sumoftotals += Number(v);
@@ -302,7 +302,7 @@
     }
     
     function formatStats(stats) {
-      return `I[${stats.I.toFixed(2)}] S[${stats.S.toFixed(2)}] W[${stats.W.toFixed(2)}] E[${stats.E.toFixed(2)}] C[${stats.C.toFixed(2)}] H[${stats.H.toFixed(2)}] ST[${stats.ST}] $[${stats.$}]`;
+      return `I[${stats.I.toFixed(2)}] S[${stats.S.toFixed(2)}] W[${stats.W.toFixed(2)}] E[${stats.E.toFixed(2)}] C[${stats.C.toFixed(2)}] H[${stats.H.toFixed(2)}] ST[${Number(stats.ST).toFixed(2)}] $[${stats.$}]`;
     }
     
     function calculateTotalStats(parsed) {
@@ -520,11 +520,18 @@
       const date = document.getElementById('dbDateSelect').value;
       if (!date) return;
       
+		// Deprecated snippet: used to set data before fetch - removed
+		// currentDayFromDB = data;
+		// currentDayFromDB.requested_date = date;  // date — значение select'а
+		// updateUIFromDB();	  
+	  
       fetch(`/api/completions/${date}`)
         .then(response => response.json())
         .then(data => {
           if (data.status === 'success') {
             currentDayFromDB = data;
+            // remember requested date for UI sync
+            currentDayFromDB.requested_date = date;
             updateUIFromDB();
           }
         })
@@ -546,6 +553,13 @@
       let text = '';
       let currentCategory = null;
       
+      // determine friction multiplier so that stats from DB can be reverted
+      let dbFriction = 1;
+      let dbMult = 1.0;
+      if (currentDayFromDB.day_data && currentDayFromDB.day_data.friction_index != null) {
+        dbFriction = Number(currentDayFromDB.day_data.friction_index) || 1;
+        dbMult = 1.0 + (dbFriction - 1) * (1.0 / 9.0);
+      }
       currentDayFromDB.habits.forEach(habit => {
         if (habit.category !== currentCategory) {
           if (currentCategory) text += '\n';
@@ -555,9 +569,10 @@
         
         const sign = habit.success ? '+' : '-';
         const quantity = habit.quantity ? ` — ${habit.quantity} ${habit.unit || ''}` : '';
+        // revert friction multiplier when showing values
         const stats = formatStats({
-          I: habit.i, S: habit.s, W: habit.w, E: habit.e,
-          C: habit.c, H: habit.h, ST: habit.st, $: habit.money
+          I: habit.i / dbMult, S: habit.s / dbMult, W: habit.w / dbMult, E: habit.e / dbMult,
+          C: habit.c / dbMult, H: habit.h / dbMult, ST: habit.st / dbMult, $: habit.money / dbMult
         });
 
         // Prefer explicit notes (project — filename) for project work entries.
@@ -603,6 +618,32 @@
       
       if (tasksInput) tasksInput.value = text;
       
+      // controls for friction slider
+      const frictionInput = document.getElementById('frictionIndex');
+      const frictionValue = document.getElementById('frictionValue');
+      if (frictionInput) {
+        if (currentDayFromDB && currentDayFromDB.day_data && currentDayFromDB.day_data.friction_index != null) {
+          frictionInput.value = currentDayFromDB.day_data.friction_index;
+          if (frictionValue) frictionValue.textContent = frictionInput.value;
+          frictionInput.disabled = true;
+        } else {
+          frictionInput.disabled = false;
+        }
+      }
+
+		  const dbDayNumber = Number(currentDayFromDB.day_data.day_number || 0);
+		  if (!isNaN(dbDayNumber) && dbDayNumber > 0) {
+			// показываем именно номер дня из БД
+			if (currentDayDisplay) currentDayDisplay.textContent = String(dbDayNumber);
+			// опционально синхронизируем lastDate/lastDay, чтобы все расчёты в UI были согласованы
+      if (lastDateEl && currentDayFromDB.requested_date) lastDateEl.value = currentDayFromDB.requested_date;
+      // также синхронизируем поле даты отчёта, чтобы пользователь видел и мог редактировать дату
+      const reportDateEl = document.getElementById('reportDate');
+      if (reportDateEl && currentDayFromDB.requested_date) reportDateEl.value = currentDayFromDB.requested_date;
+			if (lastDayEl) lastDayEl.value = String(dbDayNumber);
+		  }
+  
+
       parsed = parseTextToStructure(text);
       renderTasks();
       renderMeta();
@@ -694,9 +735,11 @@
   }
 
     
-	function loadDailyComparison() {
-	  const today = toISODate(new Date());
-	  fetch(`/api/stats/daily_comparison?date=${today}`)
+  function loadDailyComparison() {
+    // Use selected report date for comparison (fallback to today)
+    const reportDateEl = document.getElementById('reportDate');
+    const cmpDate = reportDateEl && reportDateEl.value ? toISODate(new Date(reportDateEl.value)) : toISODate(new Date());
+    fetch(`/api/stats/daily_comparison?date=${cmpDate}`)
 		.then(response => response.json())
 		.then(data => {
 		  if (data.status === 'success' && data.comparison) {
@@ -781,6 +824,9 @@
 	  .then(data => {
 		if (data.status === 'success') {
 		  alert('Данные сохранены в базу данных!');
+		  // заблокировать ползунок трения после сохранения
+		  const frictionInput = document.getElementById('frictionIndex');
+		  if (frictionInput) frictionInput.disabled = true;
 		  loadDatesFromDB();
 		  loadStreaks();
 		  // Перезагружаем стрики и обновляем отображение
@@ -1207,6 +1253,7 @@
   if (frictionInput && frictionValue) {
       frictionInput.addEventListener('input', () => {
           frictionValue.textContent = frictionInput.value;
+        saveStateToLocal();
       });
   }
     
@@ -1557,13 +1604,18 @@
     
     function renderMeta(){
       if (!todayDisplay || !currentDayDisplay || !diffDaysEl || !completedCountEl || !totalCountEl || !percentDoneEl || !stateDesc) return;
-      
-      const today = new Date();
-      todayDisplay.textContent = toISODate(today);
+
+      // system date shown separately; calculations use selected report date when available
+      const systemToday = new Date();
+      todayDisplay.textContent = toISODate(systemToday);
+
+      const reportDateEl = document.getElementById('reportDate');
+      const reportDateVal = reportDateEl && reportDateEl.value ? new Date(reportDateEl.value) : new Date();
+
       const lastDateVal = lastDateEl.value ? new Date(lastDateEl.value) : null;
       const lastDayVal = Number(lastDayEl.value || 0);
       if(lastDateVal){
-        const diff = daysBetween(lastDateVal, today);
+        const diff = daysBetween(lastDateVal, reportDateVal);
         diffDaysEl.textContent = diff;
         currentDayDisplay.textContent = String(lastDayVal + diff);
       } else {
@@ -1633,12 +1685,14 @@
 
 
 	function buildReportText(){
-	  const today = new Date();
-	  const todayISO = toISODate(today);
-	  const lastDateVal = lastDateEl.value ? new Date(lastDateEl.value) : null;
-	  const lastDayVal = Number(lastDayEl.value || 0);
-	  let dayNumber = lastDayVal;
-	  if(lastDateVal) dayNumber = lastDayVal + daysBetween(lastDateVal, today);
+    // Use selected report date for generated report (fallback to today)
+    const reportDateEl = document.getElementById('reportDate');
+    const reportDate = reportDateEl && reportDateEl.value ? new Date(reportDateEl.value) : new Date();
+    const todayISO = toISODate(reportDate);
+    const lastDateVal = lastDateEl.value ? new Date(lastDateEl.value) : null;
+    const lastDayVal = Number(lastDayEl.value || 0);
+    let dayNumber = lastDayVal;
+    if(lastDateVal) dayNumber = lastDayVal + daysBetween(lastDateVal, reportDate);
 
 	  const totals = calculateTotalStats(parsed);
 
@@ -1731,7 +1785,7 @@
 			if (item.stats && Number(item.stats[k]) !== 0) statsParts.push(`${k}[${Number(item.stats[k]).toFixed(2)}]`);
 		  });
 		  if (item.stats && (Number(item.stats.ST) || Number(item.stats.$))) {
-			if (Number(item.stats.ST) !== 0) statsParts.push(`ST[${Number(item.stats.ST)}]`);
+      if (Number(item.stats.ST) !== 0) statsParts.push(`ST[${Number(item.stats.ST).toFixed(2)}]`);
 			if (Number(item.stats.$) !== 0) statsParts.push(`$[${Number(item.stats.$)}]`);
 		  }
 		  if (statsParts.length) line += ' ' + statsParts.join(' ');
@@ -1758,7 +1812,7 @@
 			  if (subtask.stats && Number(subtask.stats[k]) !== 0) statsParts.push(`${k}[${Number(subtask.stats[k]).toFixed(2)}]`);
 			});
 			if (subtask.stats && (Number(subtask.stats.ST) || Number(subtask.stats.$))) {
-			  if (Number(subtask.stats.ST) !== 0) statsParts.push(`ST[${Number(subtask.stats.ST)}]`);
+        if (Number(subtask.stats.ST) !== 0) statsParts.push(`ST[${Number(subtask.stats.ST).toFixed(2)}]`);
 			  if (Number(subtask.stats.$) !== 0) statsParts.push(`$[${Number(subtask.stats.$)}]`);
 			}
 			if (statsParts.length) line += ' ' + statsParts.join(' ');
@@ -1795,10 +1849,12 @@
     
     function buildCSV(){
       const rows = [];
-      const today = new Date();
-      const todayISO = toISODate(today);
+      // Use selected report date for CSV export (fallback to today)
+      const reportDateEl = document.getElementById('reportDate');
+      const reportDate = reportDateEl && reportDateEl.value ? new Date(reportDateEl.value) : new Date();
+      const todayISO = toISODate(reportDate);
       const lastDayVal = Number(lastDayEl.value || 0);
-      const dayNumber = lastDateEl.value ? lastDayVal + daysBetween(new Date(lastDateEl.value), today) : lastDayVal;
+      const dayNumber = lastDateEl.value ? lastDayVal + daysBetween(new Date(lastDateEl.value), reportDate) : lastDayVal;
       
       rows.push(['ДЕНЬ', 'Дата', 'STATE', 'Тип', 'Название', 'Количество', 'Единица', 'Успех', 'I', 'S', 'W', 'E', 'C', 'H', 'ST', '$', 'Категория']);
       
@@ -1809,7 +1865,7 @@
             item.name, item.quantity || '', item.unit || '',
             item.success ? 'Да' : 'Нет',
             item.stats.I, item.stats.S, item.stats.W, item.stats.E,
-            item.stats.C, item.stats.H, item.stats.ST, item.stats.$,
+            item.stats.C, item.stats.H, Number(item.stats.ST).toFixed(2), item.stats.$,
             item.category || ''
           ]);
         }
@@ -1826,7 +1882,7 @@
               subtask.name, subtask.quantity || '', subtask.unit || '',
               subtask.success ? 'Да' : 'Нет',
               subtask.stats.I, subtask.stats.S, subtask.stats.W, subtask.stats.E,
-              subtask.stats.C, subtask.stats.H, subtask.stats.ST, subtask.stats.$,
+              subtask.stats.C, subtask.stats.H, Number(subtask.stats.ST).toFixed(2), subtask.stats.$,
               item.category || ''
             ]);
           });
@@ -1847,6 +1903,8 @@
       const payload = {
         lastDay: lastDayEl.value,
         lastDate: lastDateEl.value,
+        reportDate: document.getElementById('reportDate') ? document.getElementById('reportDate').value : '',
+        frictionIndex: document.getElementById('frictionIndex') ? document.getElementById('frictionIndex').value : '',
         inputText: tasksInput.value,
         parsed: parsed,
         state: stateSelect.value,
@@ -1869,6 +1927,12 @@
         
         if(lastDayEl && obj.lastDay) lastDayEl.value = obj.lastDay;
         if(lastDateEl && obj.lastDate) lastDateEl.value = obj.lastDate;
+        if(document.getElementById('reportDate') && obj.reportDate) document.getElementById('reportDate').value = obj.reportDate;
+        if(document.getElementById('frictionIndex') && obj.frictionIndex) {
+          document.getElementById('frictionIndex').value = obj.frictionIndex;
+          const fv = document.getElementById('frictionValue');
+          if(fv) fv.textContent = obj.frictionIndex;
+        }
         if(tasksInput && obj.inputText) tasksInput.value = obj.inputText;
         if(obj.parsed) parsed = obj.parsed;
         if(stateSelect && obj.state) stateSelect.value = obj.state;
@@ -1974,6 +2038,7 @@
       renderMeta();
       
       if(loadStateFromLocal()){
+        renderMeta();
         renderTasks(); 
         updateReportOutput(); 
       }
@@ -2030,7 +2095,10 @@
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `report_${toISODate(new Date())}.txt`;
+          // use report date, not system date
+          const reportDateEl = document.getElementById('reportDate');
+          const fnDate = reportDateEl && reportDateEl.value ? reportDateEl.value : toISODate(new Date());
+          a.download = `report_${fnDate}.txt`;
           document.body.appendChild(a);
           a.click();
           a.remove();
@@ -2042,6 +2110,19 @@
         saveBtn.addEventListener('click', () => { 
           saveStateToLocal(); 
           alert('Сохранено в localStorage.'); 
+        });
+      }
+      // keep UI coherent when report date changes
+      const reportDateEl = document.getElementById('reportDate');
+      if (reportDateEl) {
+        reportDateEl.addEventListener('change', () => {
+          // user switched target date manually; drop any loaded DB day so slider reactivates
+          currentDayFromDB = null;
+          const frictionInput = document.getElementById('frictionIndex');
+          if (frictionInput) frictionInput.disabled = false;
+          renderMeta();
+          loadDailyComparison();
+          updateReportOutput();
         });
       }
       
@@ -2067,6 +2148,10 @@
             if (thoughtsInput) thoughtsInput.value = ''; 
             if (stateSelect) stateSelect.value = 'WORK'; 
             emotionMorning = null;
+            const frictionInput = document.getElementById('frictionIndex');
+            const frictionValue = document.getElementById('frictionValue');
+            if (frictionInput) { frictionInput.value = 1; frictionInput.disabled = false; }
+            if (frictionValue) frictionValue.textContent = '1';
             renderMeta(); 
             renderTasks(); 
             updateReportOutput(); 

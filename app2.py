@@ -347,15 +347,15 @@ def save_completions():
         data = request.json
         day_date = data.get('date', date.today().isoformat())
 
-        # --- НОВОЕ: читаем индекс трения и вычисляем множитель ---
+        # --- НОВОЕ: читаем индекс трения и вычисляем множитель (переиграли, теперь максимально х2) ---
         try:
             friction = int(data.get('friction_index', 1) or 1)
         except Exception:
             friction = 1
         # Ограничим 1..10
         friction = max(1, min(10, friction))
-        # Линейная шкала: 1 -> 1.0, 10 -> 3.0
-        multiplier = 1.0 + (friction - 1) * (2.0 / 9.0)
+        # Линейная шкала: 1 -> 1.0, 10 -> 2.0 (нерфим мультипликатор)
+        multiplier = 1.0 + (friction - 1) * (1.0 / 9.0)
 
         conn = sqlite3.connect('habits.db')
         cursor = conn.cursor()
@@ -369,21 +369,21 @@ def save_completions():
                 print('Skipping habit without habit_id:', habit)
                 continue
 
-            # --- НОВОЕ: мультипликация характеристик на множитель ---
-            def _m(v):
+            # характеристики сохраняем как пришли (умножение к общей сумме применим ниже)
+            def _r(v):
                 try:
-                    return float(v or 0.0) * multiplier
+                    return float(v or 0.0)
                 except Exception:
                     return 0.0
 
-            i_val = _m(habit.get('i', 0.0))
-            s_val = _m(habit.get('s', 0.0))
-            w_val = _m(habit.get('w', 0.0))
-            e_val = _m(habit.get('e', 0.0))
-            c_val = _m(habit.get('c', 0.0))
-            h_val = _m(habit.get('h', 0.0))
-            st_val = _m(habit.get('st', 0.0))
-            money_val = _m(habit.get('money', 0.0))
+            i_val = _r(habit.get('i', 0.0))
+            s_val = _r(habit.get('s', 0.0))
+            w_val = _r(habit.get('w', 0.0))
+            e_val = _r(habit.get('e', 0.0))
+            c_val = _r(habit.get('c', 0.0))
+            h_val = _r(habit.get('h', 0.0))
+            st_val = _r(habit.get('st', 0.0))
+            money_val = _r(habit.get('money', 0.0))
 
             cursor.execute('''
                 INSERT INTO completed_habits 
@@ -465,8 +465,8 @@ def save_completions():
             INSERT OR REPLACE INTO discipline_days 
             (date, day_number, state, emotion_morning, thoughts,
              total_i, total_s, total_w, total_e, total_c, total_h, total_st, total_money,
-             completed_count, total_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             completed_count, total_count, friction_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             day_date,
             data.get('day_number'),
@@ -482,7 +482,8 @@ def save_completions():
             totals.get('ST', 0.0),
             totals.get('$', 0.0),
             data.get('completed_count', 0),
-            data.get('total_count', 0)
+            data.get('total_count', 0),
+            friction
         ))
 
         conn.commit()
@@ -534,10 +535,16 @@ def get_completions(date):
         
         conn.close()
         
+        # Prepare day data and include multiplier for client convenience
+        day_json = dict(day_data) if day_data else None
+        if day_json is not None:
+            fi = int(day_json.get('friction_index') or 1)
+            day_json['friction_index'] = fi
+            day_json['friction_multiplier'] = 1.0 + (fi - 1) * (1.0 / 9.0)
         return jsonify({
             'status': 'success',
             'habits': habits,
-            'day_data': dict(day_data) if day_data else None,
+            'day_data': day_json,
             'streaks': streaks
         })
     except Exception as e:
