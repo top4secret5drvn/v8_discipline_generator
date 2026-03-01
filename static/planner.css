@@ -11,16 +11,16 @@ body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);margin:0;color:
 .sidebar li.training{color:var(--accent);font-weight:600}
 .sidebar li input[type="checkbox"]{vertical-align:middle}
 .main{flex:1;padding:18px;box-sizing:border-box;display:flex;flex-direction:column}
-#roadmapContainer{background:#fff;border:1px solid #eee;border-radius:8px;padding:16px;display:flex;gap:12px}
-.nodes-col{flex:1;overflow:auto;padding:8px;position:relative}
-.nodes-col .node{width:120px;height:120px;border-radius:50%;background:#fff;border:2px solid #ddd;display:flex;align-items:center;justify-content:center;margin:24px 0;padding:8px;text-align:center;position:relative}
-.node .title{font-size:14px}
+#roadmapContainer{background:#fff;border:1px solid #eee;border-radius:8px;padding:16px;display:flex;gap:12px;position:relative}
+.nodes-col{flex:1;overflow:auto;padding:8px;position:relative;display:flex;flex-direction:column;align-items:flex-start;min-width:0}
+.nodes-col .node{width:80px;height:80px;border-radius:50%;background:#fff;border:2px solid #ddd;margin:24px 0 24px 12px;position:relative}
+.node .title{font-size:13px;font-weight:600;margin-top:8px;color:#333}
 .node.completed{background:var(--done);color:#fff;border-color:rgba(0,0,0,0.06)}
 .node.training{border-color:#f0c36d}
 .node.training.pending{background:#fff7d9}
 .node.training.pending .title{color:#5a4a00}
 .node button{margin-top:8px}
-svg#roadmapSvg{position:absolute;left:260px;top:90px;height:100%;width:calc(100% - 520px);pointer-events:none}
+svg#roadmapSvg{position:absolute;left:0;top:0;width:100%;pointer-events:none}
 .detail-panel{width:320px;background:#fafafa;border-left:1px solid #eee;padding:12px;border-radius:6px}
 .detail-panel h3{margin-top:0}
 .deltas{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
@@ -31,4 +31,4 @@ svg#roadmapSvg{position:absolute;left:260px;top:90px;height:100%;width:calc(100%
 .nodes-col .node.active{box-shadow:0 4px 12px rgba(0,0,0,0.08)}
 .progress{height:10px;background:#eee;border-radius:6px;overflow:hidden;margin-bottom:12px}
 #progressFill{height:100%;width:0;background:linear-gradient(90deg,var(--accent),#4bc0c8)}
-.repeat-hint{font-size:12px;margin-top:6px}
+.repeat-hint{display:none}

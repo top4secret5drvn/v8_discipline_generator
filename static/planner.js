@@ -103,8 +103,19 @@ function renderRoadmap(project, tasks){
   if(percEl) percEl.textContent = perc + '%';
 
   tasks.forEach((t, i)=>{
+    const container = document.createElement('div');
+    container.style.display = 'flex';
+    container.style.alignItems = 'flex-start';
+    container.style.gap = '12px';
+    container.style.marginBottom = '24px';
+    
     const wrapper = document.createElement('div');
     wrapper.className = 'node' + (t.completed? ' completed':'');
+    wrapper.style.flexShrink = '0';
+    wrapper.style.display = 'flex';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.justifyContent = 'center';
+    
     // training style
     const isTraining = project.startsWith('!');
     if(isTraining){
@@ -122,12 +133,16 @@ function renderRoadmap(project, tasks){
         wrapper.classList.add('training');
       }
     }
-    wrapper.style.marginTop = '24px';
-    wrapper.style.marginBottom = '24px';
-    // Apply horizontal offset for zig-zag
-    const offs = offsets[i % offsets.length] || ( (i%2)?160:0 );
-    wrapper.style.marginLeft = offs + 'px';
 
+    wrapper.onclick = ()=>{ showDetail(project, t, wrapper); };
+
+    // Text section for labels
+    const textSection = document.createElement('div');
+    textSection.style.display = 'flex';
+    textSection.style.flexDirection = 'column';
+    textSection.style.justifyContent = 'flex-start';
+    textSection.style.paddingTop = '2px';
+    
     const title = document.createElement('div');
     title.className = 'title';
     let titleText = t.filename.replace(/\.[^/.]+$/, '');
@@ -138,75 +153,50 @@ function renderRoadmap(project, tasks){
       }
     }
     title.textContent = titleText;
-    wrapper.appendChild(title);
+    textSection.appendChild(title);
 
-    // For training tasks show next repeat hint
-    if(isTraining){
-      // extract date and x-count
-      const fn = t.filename.replace(/\.[^/.]+$/, '');
-      const m = fn.match(/^(.*?)(?:\s(\d{4}-\d{2}-\d{2}))?(?:\s([x]+))?$/);
-      let core = fn, lastDate = null, xcount = 0;
-      if(m){ core = (m[1]||'').trim(); lastDate = m[2]||null; xcount = (m[3]||'').length; }
-
-      const hint = document.createElement('div');
-      hint.className = 'repeat-hint';
-      hint.style.marginTop = '6px';
-      hint.style.fontSize = '12px';
-      hint.style.color = '#5a4a00';
-
-      if(xcount >= 3 || t.completed){
-        hint.textContent = 'Выполнено';
-      } else if(lastDate){
-        // intervals in days: after each repetition
-        const intervals = [1,3,7];
-        const nextIndex = Math.min(xcount, intervals.length-1);
-        const last = new Date(lastDate + 'T00:00:00');
-        const addDays = intervals[nextIndex];
-        const next = new Date(last.getTime() + addDays*24*60*60*1000);
-        const y = next.getFullYear();
-        const mo = String(next.getMonth()+1).padStart(2,'0');
-        const d = String(next.getDate()).padStart(2,'0');
-        hint.textContent = 'Следующее повторение: ' + `${y}-${mo}-${d}`;
-      } else {
-        hint.textContent = 'Дата не установлена — пометьте выполнение';
-      }
-
-      wrapper.appendChild(hint);
-    }
-
-    wrapper.onclick = ()=>{ showDetail(project, t, wrapper); };
-
-    col.appendChild(wrapper);
+    container.appendChild(wrapper);
+    container.appendChild(textSection);
+    col.appendChild(container);
   });
 
   // Draw connecting dotted path with SVG lines between centers
-  const svgRect = svg.getBoundingClientRect();
-  const width = svgRect.width || 800;
-  const height = Math.max(400, tasks.length * nodeHeight);
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
-
-  // compute center coords for each node
-  let cumulativeY = 40;
-  const centers = [];
-  tasks.forEach((t,i)=>{
-    const offs = offsets[i % offsets.length] || ((i%2)?160:0);
-    const cx = 80 + offs;
-    const cy = cumulativeY + 60;
-    centers.push({x:cx,y:cy});
-    cumulativeY += nodeHeight;
-  });
-
-  for(let i=1;i<centers.length;i++){
-    const a = centers[i-1], b = centers[i];
-    const line = document.createElementNS('http://www.w3.org/2000/svg','path');
-    const d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
-    line.setAttribute('d', d);
-    line.setAttribute('stroke', '#ddd');
-    line.setAttribute('stroke-width', '3');
-    line.setAttribute('fill', 'none');
-    line.setAttribute('stroke-dasharray', '6,6');
-    svg.appendChild(line);
+  const nodesCol = document.getElementById('nodesCol');
+  const nodes = nodesCol.querySelectorAll('.node');
+  svg.innerHTML = '';
+  
+  if(nodes.length > 0){
+    let minY = Infinity, maxY = -Infinity;
+    const nodePos = [];
+    
+    nodes.forEach((node, i) => {
+      const rect = node.getBoundingClientRect();
+      const colRect = nodesCol.getBoundingClientRect();
+      const relY = rect.top - colRect.top + nodesCol.scrollTop;
+      const relX = rect.left - colRect.left + nodesCol.scrollLeft;
+      const cy = relY + rect.height / 2;
+      const cx = relX + rect.width / 2;
+      
+      nodePos.push({x: cx, y: cy});
+      minY = Math.min(minY, cy);
+      maxY = Math.max(maxY, cy);
+    });
+    
+    const totalHeight = maxY - minY + 100;
+    svg.setAttribute('height', Math.max(400, totalHeight));
+    
+    for(let i = 1; i < nodePos.length; i++){
+      const a = nodePos[i-1];
+      const b = nodePos[i];
+      const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+      line.setAttribute('d', d);
+      line.setAttribute('stroke', '#ddd');
+      line.setAttribute('stroke-width', '3');
+      line.setAttribute('fill', 'none');
+      line.setAttribute('stroke-dasharray', '6,6');
+      svg.appendChild(line);
+    }
   }
 }
 
